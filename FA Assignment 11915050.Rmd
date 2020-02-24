@@ -1,0 +1,233 @@
+---
+title: "FA Assignment-11915050"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+# setup chunk
+
+suppressPackageStartupMessages({
+  
+  if (!require(forecast)){install.packages("forecast")}
+  if (!require(zoo)){install.packages("zoo")}
+  if (!require(fpp2)){install.packages("fpp2")}
+  if (!require(ggpubr)){install.packages("ggpubr")}
+  if (!require(tseries)){install.packages("tseries")}
+  library(forecast) 
+  library(zoo)
+  library(fpp2)
+  library(ggpubr)
+  library(tseries)
+})
+```
+
+## loading the Auscafe dataset and transformation to a timeseries
+```{r pressure, echo=FALSE}
+Auscafe.data <- read.csv("D:\\FA\\auscafe.csv")
+head(Auscafe.data)
+tail(Auscafe.data)
+
+Auscafe.ts <- ts(Auscafe.data$value, start = c(1982,4), end = c(2017, 09), freq = 12)
+plot(Auscafe.ts, xlab = "Time", ylab = "Aus cafe")
+```
+
+## Decomposing the timeseries into components using additive and multiplicative model
+```{r}
+Auscafe1 <- decompose(Auscafe.ts, type= "additive")
+g1 <- autoplot(Auscafe1)
+Auscafe2 <- decompose(Auscafe.ts, type= "multiplicative")
+g2 <- autoplot(Auscafe2)
+ggarrange(g1,g2)
+```
+# A clear trend and seasonality is visible in the plots
+# (a) Partition the data keeping last 24 months data as validation set using R.
+```{r}
+stepsAhead <- 24
+length(Auscafe.ts)
+# Length of training data set = length of series - validation period (24)
+nTrain <- length(Auscafe.ts) - stepsAhead
+train.ts <- window(Auscafe.ts, start = c(1982, 4), end = c(1982,  nTrain + 4 - 1))
+length(train.ts)
+valid.ts <- window(Auscafe.ts, start = c(1982, nTrain + 4), end = c(1982, nTrain + stepsAhead + 4 -1))
+length(valid.ts)
+
+# fitting a polynomial trend line on training data-set and forecasting it for validation dataset.
+Auscafe.lm <-  tslm(train.ts ~ poly(trend, 2))
+Auscafe.lm.pred <- forecast(Auscafe.lm, h = stepsAhead, level = 0)
+
+# Plotting the trend-lines and fitted data
+plot(Auscafe.lm.pred,  ylab = "Auscafe", xlab = "Time", bty = "l", xaxt = "n", xlim = c(1982,2020), ylim = c(0.5, 5.5), main = "", flty = 2)
+axis(1, at = seq(1982, 2020, 1), labels = format(seq(1982, 2020, 1))) 
+lines(Auscafe.lm$fitted, lwd = 2)
+lines(valid.ts)
+lines(c(2017.75 - 2, 2017.75 - 2), c(0, 4), col= "blue") 
+lines(c(2017.75, 2017.75), c(0, 4), col = "red")
+text(2004.5, 3.5, "Training", col = "Blue")
+text(2016.5, 2.5, "Validation", col = "Red")
+text(2019.5, 3.5, "Future", col = "Orange")
+arrows(2017.75 - 2, 3.2, 1984, 3.2, code = 3, length = 0.1, lwd = 1,angle = 20)
+arrows(2017.75, 3, 2017.75 - 2, 3, code = 3, length = 0.1, lwd = 1,angle = 20)
+arrows(2018, 3.2, 2020, 3.2, code = 3, length = 0.1, lwd = 1, angle = 20)
+```
+
+#(b) Draw the time plot, ACF, PACF for the above training data
+```{r}
+autoplot(train.ts)
+Acf(train.ts, lag.max = 20, main = "")
+Pacf(train.ts, lag.max = 20, main = "")
+
+# PACF plot indicates that lag-1 has the major spike containing the auot-correlationfactor AR-1
+```
+#(c) Fit an exponential trend model with multiplicative seasonality on the training set#. Are the residuals correlated.
+
+```{r}
+# Observing the seasonal component and plots before fitting a seasonal model
+autoplot(decompose(train.ts))
+# Since there is seasonal component we need to first deseasonalize the data 
+# fit a exponential trend model and then re-seasonalize the data.
+
+# Deseasonalizing
+train.noseason <- train.ts - decompose(train.ts)$seasonal
+plot(train.noseason)
+
+# Fitting an exponenetial model to train dataset by using tslm(timeseries linear regression fit model)
+# lambda = 0 applies box-cox transformation
+# log(yt) = Beta0 + Beta1 * t + error
+train.exp.trend <- tslm(train.noseason ~ trend, lambda = 0)  
+train.exp.pred <- forecast(train.exp.trend, h=length(valid.ts), level = 0) 
+
+summary(train.exp.trend)
+
+
+```
+##(d) Use the fitted model to forecast the time series on the validation data. Plot the actual vs fitted and residual plot and estimate the RMSE on the validation set.
+```{r}
+# training fitted exponential model over full dataset
+Trendmodel <-  ts(union(train.exp.trend$fitted.values,train.exp.pred$mean),start=c(1982,1),frequency = 12) 
+seasonality <- decompose(Auscafe.ts)$seasonal
+## Adding back the seasonality component to get the forecast
+forecast <- Trendmodel + seasonality
+
+plot(Auscafe.ts, col="blue", lwd=2)
+lines(forecast,col="brown", lwd=2)
+legend(1995,4, legend=c("Actual", "Forecast"),  col=c("blue", "brown"), lty=1:1)
+```
+
+```{r}
+
+plot(train.exp.trend$residuals, main= "Residual Plot", ylab="Forecast Error",lwd=2,xlim = c(1982,2020))
+lines(valid.ts-train.exp.pred$mean, col="blue",lwd=2)
+abline(v=2015.75, col="red", lwd=2)
+text(2012,-0.2, "Training ")
+text(2018,-0.25, "Validation")
+
+# Residuals have auto co-relations.
+
+```
+
+
+3. Refer to the housing sales dataset, hsales2.csv from January 1997 through November 1995.(Use the total dataset, no need to partition)
+(a) Draw the time plot, ACF, PACF for the above data using R.
+
+```{r}
+hsales.data <- read.csv("D:\\FA\\hsales2.csv")
+hsales.ts <- ts(hsales.data$hsales, start = c(1987,1), end = c(1995, 11), freq = 12)
+plot(hsales.ts, xlab = "Time", ylab = "House sales")
+
+autoplot(decompose(hsales.ts))
+decompose(hsales.ts)$seasonal
+decompose(hsales.ts)$trend
+decompose(hsales.ts)$random
+
+
+Acf(hsales.ts, lag.max = 20, main = "")
+Pacf(hsales.ts, lag.max = 20, main = "")
+
+# Observation 
+# ACF plot has sinusoidal pattern
+# PACF plot has a significant spike at lag-1, a comparatively  insignificant spikes at 9 and 10.
+```
+
+b) Use differencing method to decompose the data into trend, seasonality and noise. Test Whether the noise has correlation left using both graphical approach and statistical test.
+
+```{r}
+ndiffs(hsales.ts) ## Number of differences required to make it stationary
+
+kpss.test(hsales.ts) ## Null Hypothesis- stationary Time series
+```
+## kpss test Null Hypothesis states that its a stationary time series
+## As a result of the test KPSS level = 0.25174 - fail to reject null
+## this series is a stationary series
+
+
+```{r}
+par(mfrow=c(1,1))
+
+plot(hsales.ts,ylab="House Sales",main = "Raw Data")
+
+plot(diff(hsales.ts, lag=1, differences=1), main = "Lag-1 Difference", ylab="House Sales")
+
+plot(diff(hsales.ts, lag=12, differences=1),main = "Seasonal Difference",ylab="House Sales")
+
+plot(diff(diff(hsales.ts, lag=12, differences=1),lag=1, differences=1),ylab="House Sales",main = "Double Difference")
+
+DOUBLEDIFF <- diff(diff(hsales.ts, lag=12, differences=1),lag=1, differences=1)
+
+kpss.test(DOUBLEDIFF) ## The data is now stationary,Null Hypothesis- stationary Time series
+
+par(mfrow=c(1,1))
+Acf(DOUBLEDIFF, lag.max= 20)
+Pacf(DOUBLEDIFF, lag.max= 20)
+```
+## From above PACF plot we can estimate below parameters
+## d = 1
+## p = 0
+## P = 2
+## From above ACF plot we can estimate below parameters
+## q = 2
+## Q = 2
+
+```{r}
+###   (f) Fit an ARIMA model using auto.arima ()function in R. How good was your anticipated model?
+
+
+## Manual Choice (ARIMA(0,1,2)(2,1,2))
+automodel <- auto.arima(hsales.ts)
+manualmodel <- Arima(hsales.ts, order = c(0,1,2), seasonal = c(2,1,2)) 
+forecast.auto <- forecast(automodel,h=24)
+forecast.manual <- forecast(manualmodel,h=24)
+
+par(mfrow=c(1,1))
+plot(forecast.auto)
+lines(forecast.manual$mean, lwd=2, col="red")
+legend(1996,2800, legend=c("Automatic", "Manual","Raw data"),  col=c("blue", "red","black"), lty=1:1, cex=1)
+
+plot(forecast.auto$residuals,lwd=2, col="blue", ylab="Residuals")
+lines(forecast.manual$residuals,lwd=2, col="red")
+legend(1960,15, legend=c("Automatic", "Manual","Raw data"),  col=c("blue", "red","black"), lty=1:1, cex=1)
+
+
+```
+
+
+```{r}
+automodel <- auto.arima(hsales.ts)
+summary(automodel)
+```
+## Auto ARIMA does a multiple iterations for the plots and hence gives an optimized result for the best model
+## Here seasonality is present in the residuals and hence [p,d,q] and [P,D,Q] orders are generated.
+## d = 1 one times differencing is required.
+## p = 0 no immediate spikes on PACF plot
+## P = 2 2 significant spikes on PACF plot corresponding to seasons
+
+## q = 2 2 significant spikes on ACF plot corresponding to MA-2
+## Q = 0 no seasonal correlation for MA model
+
+
+
+
+
